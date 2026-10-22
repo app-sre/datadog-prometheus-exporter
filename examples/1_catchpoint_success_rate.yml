@@ -1,0 +1,17 @@
+dd:
+  apiKey: xxx
+  appKey: xxx
+flows:
+- name: catchpoint-success-rate
+  query: "avg:catchpoint.success.rate{*} by {testname}"
+  pollInterval: 60s
+  lookback: 5m
+  prometheusMetricTemplate:
+    name: catchpoint_success_rate
+    type: gauge
+    labels:
+      probe: '{{ .DatadogTags.testname }}'
+grouping:
+- label: probe
+  groupReadyCondition:
+    minMetrics: 1

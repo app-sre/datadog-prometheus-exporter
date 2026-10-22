@@ -1,0 +1,123 @@
+apiVersion: template.openshift.io/v1
+kind: Template
+metadata:
+  name: datadog-prometheus-exporter
+objects:
+- apiVersion: v1
+  kind: ServiceAccount
+  metadata:
+    name: datadog-prometheus-exporter
+- apiVersion: apps/v1
+  kind: Deployment
+  metadata:
+    name: datadog-prometheus-exporter
+    annotations:
+      ignore-check.kube-linter.io/minimum-three-replicas: "running multiple replicas yields wrong results for counter metrics, each replica tracks its own last-seen-value state" # https://github.com/app-sre/datadog-prometheus-exporter/blob/main/README.md#known-issues
+      ignore-check.kube-linter.io/unset-cpu-requirements: "no cpu limits"
+    labels:
+      app: datadog-prometheus-exporter
+  spec:
+    replicas: ${{REPLICAS}}
+    selector:
+      matchLabels:
+        app: datadog-prometheus-exporter
+    strategy:
+      rollingUpdate:
+        maxSurge: 1
+        maxUnavailable: 1
+      type: RollingUpdate
+    template:
+      metadata:
+        creationTimestamp: null
+        labels:
+          app: datadog-prometheus-exporter
+      spec:
+        serviceAccountName: datadog-prometheus-exporter
+        containers:
+        - image: ${IMAGE}:${IMAGE_TAG}
+          name: datadog-prometheus-exporter
+          imagePullPolicy: IfNotPresent
+          ports:
+          - containerPort: 9090
+            name: observability
+            protocol: TCP
+          - containerPort: 9091
+            name: app
+            protocol: TCP
+          readinessProbe:
+            failureThreshold: 3
+            periodSeconds: 10
+            successThreshold: 1
+            httpGet:
+              path: /ready
+              port: app
+            timeoutSeconds: 1
+          livenessProbe:
+            failureThreshold: 3
+            periodSeconds: 10
+            successThreshold: 1
+            httpGet:
+              path: /healthy
+              port: app
+            timeoutSeconds: 1
+          resources:
+            limits:
+              memory: ${MEMORY_LIMIT}
+            requests:
+              memory: ${MEMORY_REQUESTS}
+              cpu: ${CPU_REQUESTS}
+          volumeMounts:
+          - mountPath: /config
+            name: datadog-exporter-config
+            readOnly: true
+        restartPolicy: Always
+        volumes:
+        - name: datadog-exporter-config
+          secret:
+            secretName: datadog-exporter-config
+        affinity:
+          podAntiAffinity:
+            preferredDuringSchedulingIgnoredDuringExecution:
+            - podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                  - key: app
+                    operator: In
+                    values:
+                    - datadog-prometheus-exporter
+                topologyKey: kubernetes.io/hostname
+              weight: 100
+- kind: Service
+  apiVersion: v1
+  metadata:
+    name: datadog-prometheus-exporter
+    labels:
+      app: datadog-prometheus-exporter
+  spec:
+    ports:
+      - name: observability
+        protocol: TCP
+        port: 9090
+        targetPort: 9090
+      - name: app
+        protocol: TCP
+        port: 9091
+        targetPort: 9091
+    sessionAffinity: None
+    type: ClusterIP
+    selector:
+      app: datadog-prometheus-exporter
+
+parameters:
+- name: IMAGE
+  value: quay.io/app-sre/datadog-prometheus-exporter
+- name: IMAGE_TAG
+  value: latest
+- name: REPLICAS
+  value: "1"
+- name: CPU_REQUESTS
+  value: 10m
+- name: MEMORY_REQUESTS
+  value: 200Mi
+- name: MEMORY_LIMIT
+  value: 200Mi

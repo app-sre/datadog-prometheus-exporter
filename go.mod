@@ -1,6 +1,6 @@
 module datadog-prometheus-exporter
 
-go 1.24.0
+go 1.26.0
 
 require (
 	github.com/gorilla/mux v1.8.1
@@ -25,6 +25,6 @@ require (
 	github.com/spf13/pflag v1.0.9 // indirect
 	go.uber.org/multierr v1.10.0 // indirect
 	go.yaml.in/yaml/v2 v2.4.2 // indirect
-	golang.org/x/sys v0.35.0 // indirect
+	golang.org/x/sys v0.49.0 // indirect
 	google.golang.org/protobuf v1.36.8 // indirect
 )

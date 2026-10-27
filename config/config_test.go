@@ -8,28 +8,29 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestExampleSuccessRate(t *testing.T) {
-	c, err := config.LoadConfig("../examples/1_catchpoint_success_rate.yml")
+func TestExampleCatchpointChecks(t *testing.T) {
+	c, err := config.LoadConfig("../examples/1_catchpoint_checks.yml")
 	assert.Nil(t, err)
 	assert.Equal(t, "xxx", c.Dd.ApiKey)
 	assert.Equal(t, "xxx", c.Dd.AppKey)
 	assert.Equal(t, "datadoghq.com", c.Dd.Site)
-	assert.Equal(t, 1, len(c.Flows))
+	assert.Equal(t, 2, len(c.Flows))
 	assert.Equal(t, 60*time.Second, c.Flows[0].PollInterval)
 	assert.Equal(t, 5*time.Minute, c.Flows[0].Lookback)
-	assert.Equal(t, "gauge", c.Flows[0].PrometheusMetricTemplate.Type)
+	assert.Equal(t, "counter", c.Flows[0].PrometheusMetricTemplate.Type)
+	assert.Equal(t, "counter", c.Flows[1].PrometheusMetricTemplate.Type)
 }
 
 func TestGetMetricName(t *testing.T) {
-	c, err := config.LoadConfig("../examples/1_catchpoint_success_rate.yml")
+	c, err := config.LoadConfig("../examples/1_catchpoint_checks.yml")
 	assert.Nil(t, err)
 	mt := c.Flows[0].PrometheusMetricTemplate
 
 	name, err := mt.GetMetricName(config.NameTemplateVars{
-		DatadogMetricName: "catchpoint-success-rate",
+		DatadogMetricName: "catchpoint-checks",
 	})
 	assert.Nil(t, err)
-	assert.Equal(t, "catchpoint_success_rate", name)
+	assert.Equal(t, "catchpoint_checks_total", name)
 }
 
 func TestGetMetricNameDefaultsToDatadogMetricName(t *testing.T) {
@@ -42,7 +43,7 @@ func TestGetMetricNameDefaultsToDatadogMetricName(t *testing.T) {
 }
 
 func TestGetLabelValue(t *testing.T) {
-	c, err := config.LoadConfig("../examples/1_catchpoint_success_rate.yml")
+	c, err := config.LoadConfig("../examples/1_catchpoint_checks.yml")
 	assert.Nil(t, err)
 	mt := c.Flows[0].PrometheusMetricTemplate
 

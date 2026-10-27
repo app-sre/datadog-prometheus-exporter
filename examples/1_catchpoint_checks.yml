@@ -1,0 +1,29 @@
+dd:
+  apiKey: xxx
+  appKey: xxx
+flows:
+# despite its name, catchpoint.success.rate is a Datadog count-type metric
+# submitting exactly 1 per check execution regardless of outcome - sum(...)
+# yields a true execution count; avg(...) is always 1 and carries no signal
+- name: catchpoint-checks
+  query: "sum:catchpoint.success.rate{*} by {testname}"
+  pollInterval: 60s
+  lookback: 5m
+  prometheusMetricTemplate:
+    name: catchpoint_checks_total
+    type: counter
+    labels:
+      probe: '{{ .DatadogTags.testname }}'
+- name: catchpoint-check-failures
+  query: "sum:catchpoint.error.error{*} by {testname}"
+  pollInterval: 60s
+  lookback: 5m
+  prometheusMetricTemplate:
+    name: catchpoint_check_failures_total
+    type: counter
+    labels:
+      probe: '{{ .DatadogTags.testname }}'
+grouping:
+- label: probe
+  groupReadyCondition:
+    minMetrics: 2

@@ -76,9 +76,100 @@ func TestApplyMetricGauge(t *testing.T) {
 	assert.Nil(t, fp.PrometheusMetricTemplate.Validate())
 
 	vars := config.NameTemplateVars{DatadogTags: map[string]string{"testname": "probe-a"}}
-	err := applyMetric(fp, vars, 1.0)
+	ok, err := applyMetric(fp, vars, []int64{1000}, []*float64{f(1.0)})
 	assert.Nil(t, err)
+	assert.True(t, ok)
 
 	g := getGauge("test_gauge", []string{"probe"})
 	assert.Equal(t, 1.0, testutil.ToFloat64(g.WithLabelValues("probe-a")))
+}
+
+func TestApplyMetricGaugeNoSettledPoint(t *testing.T) {
+	fp := config.FlowProgram{
+		Name: "test-flow",
+		PrometheusMetricTemplate: config.PrometheusMetric{
+			Name: "test_gauge_unsettled",
+			Type: "gauge",
+		},
+	}
+	assert.Nil(t, fp.PrometheusMetricTemplate.Validate())
+
+	ok, err := applyMetric(fp, config.NameTemplateVars{}, []int64{1000}, []*float64{nil})
+	assert.Nil(t, err)
+	assert.False(t, ok)
+}
+
+func TestApplyMetricUnknownType(t *testing.T) {
+	fp := config.FlowProgram{
+		Name: "test-flow",
+		PrometheusMetricTemplate: config.PrometheusMetric{
+			Name: "test_unknown",
+			Type: "histogram",
+		},
+	}
+	assert.Nil(t, fp.PrometheusMetricTemplate.Validate())
+
+	ok, err := applyMetric(fp, config.NameTemplateVars{}, []int64{1000}, []*float64{f(1.0)})
+	assert.NotNil(t, err)
+	assert.False(t, ok)
+}
+
+func TestApplyMetricCounterSumsNewBucketsOnly(t *testing.T) {
+	fp := config.FlowProgram{
+		Name: "test-flow-counter",
+		PrometheusMetricTemplate: config.PrometheusMetric{
+			Name: "test_counter_total",
+			Type: "counter",
+			Labels: map[string]string{
+				"probe": "{{ .DatadogTags.testname }}",
+			},
+		},
+	}
+	assert.Nil(t, fp.PrometheusMetricTemplate.Validate())
+	vars := config.NameTemplateVars{DatadogTags: map[string]string{"testname": "probe-counter"}}
+
+	// first poll: no prior watermark, every bucket in the window is new
+	ok, err := applyMetric(fp, vars, []int64{1000, 2000, 3000}, []*float64{f(180), f(180), f(180)})
+	assert.Nil(t, err)
+	assert.True(t, ok)
+	c := getCounter("test_counter_total", []string{"probe"})
+	assert.Equal(t, 540.0, testutil.ToFloat64(c.WithLabelValues("probe-counter")))
+
+	// second poll overlaps two already-counted buckets and adds one new one:
+	// only the new bucket (4000) should be added, not a re-sum of the window
+	ok, err = applyMetric(fp, vars, []int64{2000, 3000, 4000}, []*float64{f(180), f(180), f(90)})
+	assert.Nil(t, err)
+	assert.True(t, ok)
+	assert.Equal(t, 630.0, testutil.ToFloat64(c.WithLabelValues("probe-counter")))
+
+	// third poll: no bucket newer than the last watermark -> quiet, not an error
+	ok, err = applyMetric(fp, vars, []int64{3000, 4000}, []*float64{f(180), f(90)})
+	assert.Nil(t, err)
+	assert.False(t, ok)
+	assert.Equal(t, 630.0, testutil.ToFloat64(c.WithLabelValues("probe-counter")))
+}
+
+func TestApplyMetricCounterSkipsNullBuckets(t *testing.T) {
+	fp := config.FlowProgram{
+		Name: "test-flow-counter-null",
+		PrometheusMetricTemplate: config.PrometheusMetric{
+			Name: "test_counter_null_total",
+			Type: "counter",
+		},
+	}
+	assert.Nil(t, fp.PrometheusMetricTemplate.Validate())
+
+	// the most recent bucket is still settling (null); it must not be
+	// counted now, nor permanently skipped once it does settle
+	ok, err := applyMetric(fp, config.NameTemplateVars{}, []int64{1000, 2000}, []*float64{f(10), nil})
+	assert.Nil(t, err)
+	assert.True(t, ok)
+	c := getCounter("test_counter_null_total", []string{})
+	assert.Equal(t, 10.0, testutil.ToFloat64(c.WithLabelValues()))
+
+	// next poll: bucket 2000 has now settled and a new bucket 3000 appeared
+	ok, err = applyMetric(fp, config.NameTemplateVars{}, []int64{1000, 2000, 3000}, []*float64{f(10), f(20), f(30)})
+	assert.Nil(t, err)
+	assert.True(t, ok)
+	assert.Equal(t, 60.0, testutil.ToFloat64(c.WithLabelValues()))
 }

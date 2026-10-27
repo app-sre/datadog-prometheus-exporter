@@ -25,10 +25,13 @@ var (
 	ddGauges   = make(map[string]*prometheus.GaugeVec)
 	ddCounters = make(map[string]*prometheus.CounterVec)
 
-	// counters can't be set directly from Datadog's absolute values, so we
-	// track the last value seen per series fingerprint and Add() the delta.
-	counterMu        sync.Mutex
-	lastCounterValue = make(map[string]float64)
+	// Counters can't be Set() directly: Datadog's sum(...) queries return a
+	// per-bucket count, not a cumulative total, so each bucket is an
+	// independent increment rather than a delta against the previous value.
+	// We track the timestamp (ms) through which a series has already been
+	// counted, per series fingerprint, and sum any newer buckets each poll.
+	counterMu            sync.Mutex
+	lastCounterTimestamp = make(map[string]int64)
 
 	// self observability
 	flowMetricsReceived *prometheus.CounterVec
@@ -115,21 +118,20 @@ func poll(dd config.Dd, fp config.FlowProgram) {
 			continue
 		}
 
-		value, ok := lastNonNull(attrs.Values[i])
-		if !ok {
-			// no settled data point yet for this series in the lookback window
-			flowMetricsFailed.WithLabelValues(fp.Name).Inc()
-			continue
-		}
-
 		vars := config.NameTemplateVars{
 			DatadogMetricName: fp.Name,
 			DatadogTags:       parseTags(s.GroupTags),
 		}
 
-		if err := applyMetric(fp, vars, value); err != nil {
+		ok, err := applyMetric(fp, vars, attrs.Times, attrs.Values[i])
+		if err != nil {
 			flowMetricsFailed.WithLabelValues(fp.Name).Inc()
 			Log().Errorf("flow %s: failed to apply metric: %+s", fp.Name, err)
+			continue
+		}
+		if !ok {
+			// gauge: no settled data point yet in the lookback window.
+			// counter: no new bucket since the last poll. Neither is an error.
 			continue
 		}
 		flowMetricsReceived.WithLabelValues(fp.Name).Inc()
@@ -141,32 +143,71 @@ func poll(dd config.Dd, fp config.FlowProgram) {
 	}
 }
 
-func applyMetric(fp config.FlowProgram, vars config.NameTemplateVars, value float64) error {
+// applyMetric renders the metric's name/labels and records the latest
+// value(s). It returns ok=false (with a nil error) when there's simply
+// nothing new to record yet - a gauge with no settled point in the lookback
+// window, or a counter with no bucket newer than what's already been
+// counted - which the caller treats as a quiet, non-error poll outcome.
+func applyMetric(fp config.FlowProgram, vars config.NameTemplateVars, times []int64, values []*float64) (bool, error) {
 	mt := fp.PrometheusMetricTemplate
 	name, labelNames, labelValues, err := buildPrometheusMetadata(mt, vars)
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	switch mt.Type {
 	case "gauge":
+		value, ok := lastNonNull(values)
+		if !ok {
+			return false, nil
+		}
 		getGauge(name, labelNames).WithLabelValues(labelValues...).Set(value)
+		return true, nil
 	case "counter":
 		fingerprint := strings.Join(append([]string{fp.Name, name}, labelValues...), "|")
-		counterMu.Lock()
-		last, seen := lastCounterValue[fingerprint]
-		lastCounterValue[fingerprint] = value
-		counterMu.Unlock()
-		if seen {
-			// guard against resets/overlapping re-reads producing a negative delta
-			if delta := value - last; delta >= 0 {
-				getCounter(name, labelNames).WithLabelValues(labelValues...).Add(delta)
-			}
+		sum, watermark, hasNew := counterIncrement(fingerprint, times, values)
+		if !hasNew {
+			return false, nil
 		}
+		counterMu.Lock()
+		lastCounterTimestamp[fingerprint] = watermark
+		counterMu.Unlock()
+		if sum > 0 {
+			getCounter(name, labelNames).WithLabelValues(labelValues...).Add(sum)
+		}
+		return true, nil
 	default:
-		return fmt.Errorf("unknown metric type %q", mt.Type)
+		return false, fmt.Errorf("unknown metric type %q", mt.Type)
 	}
-	return nil
+}
+
+// counterIncrement sums every non-null point newer than the series'
+// recorded watermark (the timestamp through which it's already been
+// counted). Datadog's sum(...) rollup buckets are independent per-bucket
+// counts, not a running total, so correctness here means summing every
+// not-yet-seen bucket rather than diffing against a single previous value -
+// that stays correct regardless of how the poll interval lines up with the
+// query's bucket size (handles both faster and slower polling, and misses).
+func counterIncrement(fingerprint string, times []int64, values []*float64) (sum float64, watermark int64, hasNew bool) {
+	counterMu.Lock()
+	lastTs, seen := lastCounterTimestamp[fingerprint]
+	counterMu.Unlock()
+
+	watermark = lastTs
+	for i, v := range values {
+		if v == nil {
+			continue
+		}
+		if seen && times[i] <= lastTs {
+			continue
+		}
+		sum += *v
+		hasNew = true
+		if times[i] > watermark {
+			watermark = times[i]
+		}
+	}
+	return sum, watermark, hasNew
 }
 
 // buildPrometheusMetadata renders a metric's name and label values. Label

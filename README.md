@@ -20,16 +20,18 @@ dd:
   apiKey: $apiKey
   appKey: $appKey
 flows:
-- name: catchpoint-success-rate
-  query: "avg:catchpoint.success.rate{*} by {testname}"
+- name: catchpoint-checks
+  query: "sum:catchpoint.success.rate{*} by {testname}"
   pollInterval: 60s
   lookback: 5m
   prometheusMetricTemplate:
-    name: catchpoint_success_rate
-    type: gauge
+    name: catchpoint_checks_total
+    type: counter
     labels:
       probe: '{{ .DatadogTags.testname }}'
 ```
+
+**Watch out for `avg` vs `sum`:** many Datadog metrics (check the metric's `type` via `GET /api/v1/metrics/<name>`) are Datadog-type `count`, submitting a fixed value per event regardless of outcome. `avg:` over such a metric is always the same constant and carries no signal; `sum:` over the same metric yields a real per-window count. `catchpoint.success.rate` is a real-world example of this despite its name: it's Datadog-type `count`, submits exactly `1` per check execution, and `avg:catchpoint.success.rate{...}` is always `1` — `sum:` is what actually reflects check volume.
 
 **Important:** a Datadog query must include a `by {tag}` grouping clause for any tag you reference in `prometheusMetricTemplate` — without it, Datadog returns a single ungrouped series with no tags at all, and any label template referencing a tag will silently render as `<no value>` rather than failing loudly. Always include every tag you plan to use as a Prometheus label in the query's `by {...}` clause.
 
@@ -63,8 +65,8 @@ Because polling re-reads a sliding window rather than receiving a one-shot event
 
 ## Metric types
 
-- **gauge**: the latest value from each poll is set directly. This fits most Datadog metrics (ratios, rates, timings).
-- **counter**: Datadog's API returns an absolute value per poll, not a delta, so counters are derived: the exporter tracks the last value seen per series and `Add()`s the delta on each poll. A negative delta (e.g. from a metric reset) is ignored rather than applied, to avoid corrupting the Prometheus counter.
+- **gauge**: the latest non-null value from each poll's lookback window is set directly. This fits most Datadog metrics (ratios, rates, timings).
+- **counter**: a `sum(...)`-aggregated Datadog query returns an independent count per rollup bucket, not a cumulative total, so each new bucket is an increment rather than a delta against the previous value. The exporter tracks, per series, the timestamp through which buckets have already been counted, and on each poll sums every bucket newer than that watermark before `Add()`-ing the total. This stays correct regardless of how the poll interval lines up with the query's bucket size — a slow poll just sums more buckets at once; a fast poll correctly finds nothing new yet.
 
 ## Scraping metric groups
 
@@ -106,5 +108,5 @@ Observability metrics for flow polling and the go runtime are available on obser
 `ddpe_flow_poll_errors_total` counts whole-poll failures (HTTP/auth/decode errors against the Datadog API). `ddpe_flow_metrics_failed_total` counts individual series within an otherwise successful poll that couldn't be converted (e.g. no non-null data point in the lookback window, or a template render error).
 
 ## Known issues
-- when counter metrics are used, running multiple replicas of the exporter will yield wrong results: each replica independently tracks its own last-seen-value state in memory, so each would compute and apply its own delta against the same absolute Datadog value, double (or N-times) counting increments.
+- when counter metrics are used, running multiple replicas of the exporter will yield wrong results: each replica independently tracks its own per-series watermark in memory, so each would sum and apply the same Datadog buckets, double (or N-times) counting increments.
 - a Datadog query without a `by {tag}` clause returns a single ungrouped series; any label template referencing a tag in that case renders as `<no value>` rather than erroring.

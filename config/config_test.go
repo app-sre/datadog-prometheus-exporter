@@ -47,11 +47,42 @@ func TestGetLabelValue(t *testing.T) {
 	assert.Nil(t, err)
 	mt := c.Flows[0].PrometheusMetricTemplate
 
+	// the example config's probe label strips Datadog's leading "_" via trimPrefix
 	x, err := mt.GetLabelValue("probe", config.NameTemplateVars{
 		DatadogTags: map[string]string{"testname": "_some_probe"},
 	})
 	assert.Nil(t, err)
-	assert.Equal(t, "_some_probe", x)
+	assert.Equal(t, "some_probe", x)
+}
+
+func TestTrimPrefixTemplateFunc(t *testing.T) {
+	metric := config.PrometheusMetric{
+		Type: "gauge",
+		Labels: map[string]string{
+			"probe":  `{{ trimPrefix "_" .DatadogTags.testname }}`,
+			"piped":  `{{ .DatadogTags.testname | trimPrefix "_" }}`,
+			"absent": `{{ trimPrefix "_" .DatadogTags.other }}`,
+		},
+	}
+	assert.Nil(t, metric.Validate())
+
+	vars := config.NameTemplateVars{DatadogTags: map[string]string{
+		"testname": "_app-sre-test-quayio-ue2-pull-monitor-v2",
+		"other":    "no-leading-underscore",
+	}}
+
+	v, err := metric.GetLabelValue("probe", vars)
+	assert.Nil(t, err)
+	assert.Equal(t, "app-sre-test-quayio-ue2-pull-monitor-v2", v)
+
+	v, err = metric.GetLabelValue("piped", vars)
+	assert.Nil(t, err)
+	assert.Equal(t, "app-sre-test-quayio-ue2-pull-monitor-v2", v)
+
+	// strings.TrimPrefix is a no-op when the prefix isn't present
+	v, err = metric.GetLabelValue("absent", vars)
+	assert.Nil(t, err)
+	assert.Equal(t, "no-leading-underscore", v)
 }
 
 func TestMinMetricsNotAUInt(t *testing.T) {

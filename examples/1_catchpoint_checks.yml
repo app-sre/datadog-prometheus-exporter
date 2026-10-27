@@ -5,8 +5,16 @@ flows:
 # despite its name, catchpoint.success.rate is a Datadog count-type metric
 # submitting exactly 1 per check execution regardless of outcome - sum(...)
 # yields a true execution count; avg(...) is always 1 and carries no signal
+#
+# .fill(null) is required: Datadog interpolates gaps across the merged
+# series by default even for count-type metrics once a query spans more
+# than one underlying series (here, one per Catchpoint node). Without it,
+# sparse per-node points get smeared across neighboring time buckets before
+# the cross-series sum, inflating the total by 2-15x depending on window
+# and node count. Verified empirically against individually-queried,
+# fine-rollup per-node ground truth (APPSRE-15554).
 - name: catchpoint-checks
-  query: "sum:catchpoint.success.rate{*} by {testname}"
+  query: "sum:catchpoint.success.rate{*} by {testname}.fill(null)"
   pollInterval: 60s
   lookback: 5m
   prometheusMetricTemplate:
@@ -15,7 +23,7 @@ flows:
     labels:
       probe: '{{ trimPrefix "_" .DatadogTags.testname }}'
 - name: catchpoint-check-failures
-  query: "sum:catchpoint.error.error{*} by {testname}"
+  query: "sum:catchpoint.error.error{*} by {testname}.fill(null)"
   pollInterval: 60s
   lookback: 5m
   prometheusMetricTemplate:

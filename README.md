@@ -35,6 +35,8 @@ flows:
 
 **Important:** a Datadog query must include a `by {tag}` grouping clause for any tag you reference in `prometheusMetricTemplate` — without it, Datadog returns a single ungrouped series with no tags at all, and any label template referencing a tag will silently render as `<no value>` rather than failing loudly. Always include every tag you plan to use as a Prometheus label in the query's `by {...}` clause.
 
+**Template functions:** `Name`/`Labels` templates have access to Go's built-in template functions plus one custom addition, `trimPrefix` (Sprig's argument order: `trimPrefix <prefix> <string>`, also usable piped as `{{ .X | trimPrefix "_" }}`). This is useful because some Datadog tag values carry a vendor-added prefix that doesn't appear in the original source system — e.g. some Catchpoint tag values (including `testname`) get a leading `_` from Datadog that the equivalent SignalFx-sourced value didn't have. `probe: '{{ trimPrefix "_" .DatadogTags.testname }}'` normalizes that away so an existing alert or dashboard matching on the plain probe name keeps working unchanged.
+
 The exporter process needs to be restarted for configuration changes to become effective.
 
 Have a look at the [examples directory](/examples) for inspiration.

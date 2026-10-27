@@ -4,11 +4,22 @@ import (
 	"bytes"
 	"fmt"
 	"io/ioutil"
+	"strings"
 	"text/template"
 	"time"
 
 	"gopkg.in/yaml.v3"
 )
+
+// templateFuncs are available to every PrometheusMetric Name/Labels template.
+var templateFuncs = template.FuncMap{
+	// trimPrefix uses the common Sprig argument order (prefix, s) so it reads
+	// naturally both as `trimPrefix "_" .X` and piped as `{{ .X | trimPrefix "_" }}`.
+	// Useful to normalize Datadog tag values that carry a vendor-added prefix
+	// (e.g. some Catchpoint tag values get a leading "_") back to what an
+	// existing consumer (an alert, a dashboard) expects.
+	"trimPrefix": func(prefix, s string) string { return strings.TrimPrefix(s, prefix) },
+}
 
 type GroupReadyCondition struct {
 	MinMetrics uint `yaml:"minMetrics"`
@@ -43,7 +54,7 @@ func (pm *PrometheusMetric) Validate() error {
 	if name == "" {
 		name = "{{ .DatadogMetricName }}"
 	}
-	tmpl, err := template.New("x").Parse(name)
+	tmpl, err := template.New("x").Funcs(templateFuncs).Parse(name)
 	if err != nil {
 		return err
 	}
@@ -52,7 +63,7 @@ func (pm *PrometheusMetric) Validate() error {
 	// label templates
 	labelTemplates := map[string]template.Template{}
 	for labelName, labelValue := range pm.Labels {
-		tmpl, err := template.New("x").Parse(labelValue)
+		tmpl, err := template.New("x").Funcs(templateFuncs).Parse(labelValue)
 		if err != nil {
 			return err
 		}

@@ -13,7 +13,7 @@ flows:
     name: catchpoint_checks_total
     type: counter
     labels:
-      probe: '{{ .DatadogTags.testname }}'
+      probe: '{{ trimPrefix "_" .DatadogTags.testname }}'
 - name: catchpoint-check-failures
   query: "sum:catchpoint.error.error{*} by {testname}"
   pollInterval: 60s
@@ -22,7 +22,7 @@ flows:
     name: catchpoint_check_failures_total
     type: counter
     labels:
-      probe: '{{ .DatadogTags.testname }}'
+      probe: '{{ trimPrefix "_" .DatadogTags.testname }}'
 grouping:
 - label: probe
   groupReadyCondition:

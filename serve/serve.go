@@ -172,9 +172,12 @@ func applyMetric(fp config.FlowProgram, vars config.NameTemplateVars, times []in
 		counterMu.Lock()
 		lastCounterTimestamp[fingerprint] = watermark
 		counterMu.Unlock()
-		if sum > 0 {
-			getCounter(name, labelNames).WithLabelValues(labelValues...).Add(sum)
-		}
+		// Always register the series, even at sum=0: a counter that never
+		// increments (e.g. zero check failures) must still exist at 0, not
+		// be silently absent - downstream consumers (rate()/increase(), and
+		// this exporter's own groupReadyCondition gate) depend on the series
+		// existing.
+		getCounter(name, labelNames).WithLabelValues(labelValues...).Add(sum)
 		return true, nil
 	default:
 		return false, fmt.Errorf("unknown metric type %q", mt.Type)

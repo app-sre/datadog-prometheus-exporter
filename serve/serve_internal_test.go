@@ -149,6 +149,33 @@ func TestApplyMetricCounterSumsNewBucketsOnly(t *testing.T) {
 	assert.Equal(t, 630.0, testutil.ToFloat64(c.WithLabelValues("probe-counter")))
 }
 
+func TestApplyMetricCounterRegistersZeroSum(t *testing.T) {
+	fp := config.FlowProgram{
+		Name: "test-flow-counter-zero",
+		PrometheusMetricTemplate: config.PrometheusMetric{
+			Name: "test_counter_zero_total",
+			Type: "counter",
+			Labels: map[string]string{
+				"probe": "{{ .DatadogTags.testname }}",
+			},
+		},
+	}
+	assert.Nil(t, fp.PrometheusMetricTemplate.Validate())
+	vars := config.NameTemplateVars{DatadogTags: map[string]string{"testname": "probe-zero"}}
+
+	// every bucket is zero (e.g. zero check failures this poll) - the series
+	// must still be registered at 0, not silently absent, so downstream
+	// consumers (rate()/increase(), and this exporter's own
+	// groupReadyCondition gate) see it exist.
+	ok, err := applyMetric(fp, vars, []int64{1000, 2000}, []*float64{f(0), f(0)})
+	assert.Nil(t, err)
+	assert.True(t, ok)
+
+	c := getCounter("test_counter_zero_total", []string{"probe"})
+	assert.Equal(t, 1, testutil.CollectAndCount(c))
+	assert.Equal(t, 0.0, testutil.ToFloat64(c.WithLabelValues("probe-zero")))
+}
+
 func TestApplyMetricCounterSkipsNullBuckets(t *testing.T) {
 	fp := config.FlowProgram{
 		Name: "test-flow-counter-null",

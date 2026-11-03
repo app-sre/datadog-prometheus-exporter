@@ -8,7 +8,7 @@ RUN CGO_ENABLED=0 go build -o datadog-prometheus-exporter -a -installsuffix cgo 
 FROM builder as test
 RUN go test ./...
 
-FROM registry.access.redhat.com/ubi9-minimal@sha256:bba2b4bbf0ed15cfe7dd72a1e17ae7d2015a141f306b304e1a2785c41400e39c
+FROM registry.access.redhat.com/ubi9-minimal@sha256:dfa0eb04abc59221544e74862432496add1f491f915c9b531880f91affc0e12c
 RUN microdnf update -y && microdnf install -y ca-certificates && rm -rf /var/cache/yum
 COPY --from=builder /build/datadog-prometheus-exporter /
 ENTRYPOINT ["/datadog-prometheus-exporter"]
